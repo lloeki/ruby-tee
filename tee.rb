@@ -25,63 +25,82 @@ class IO
     digest_with Digest::SHA2.new(256), chunk_size
   end
 
-  def fiber_chunks(chunk_size=1024)
-    Enumerator.new do |y|
-      until eof?
-        Fiber.yield
-        y << read(chunk_size)
-      end
-    end
-  end
-
   def tee(*procs)
-    results = procs.map { nil }
     ios = procs.map do |proc|
-      #IO.new
-      self
+      FiberChunkedIO.new &proc
     end
-    fibers = procs.map.with_index do |proc, i|
-      # set up communication
-      # start each proc, which will yield just before reading
-      Fiber.new do
-        results[i] = proc.call ios[i]
-      end
-    end.each { |fiber| fiber.resume }
-    prev_pos = tell
+
     chunks.each do |chunk|
-      new_pos = tell
       # for each proc
       # - copy chunk into its dedicated IO stream
       # - resume
-      procs.each.with_index do |proc, i|
-        ios[i].seek prev_pos
-        #ios[i].write chunk
-        fibers[i].resume
-        ios[i].seek new_pos
+      ios.each.with_index do |io, i|
+        $stdout.puts "#{i}:#{tell}"
+        io.write chunk
+        io.resume
       end
-      prev_pos = new_pos
     end
-    results
+    ios.map { |io| io.resume }
   end
 end
 
+class FiberChunkedIO
+  def initialize(chunk_size=1024, &block)
+    @chunk_size = chunk_size
+    @chunks = []
+    @fiber = Fiber.new do
+      @result = block.call self
+    end
+  end
 
-File.open("tee.rb") do |f|
+  def resume
+    @fiber.resume
+    @result
+  end
+
+  def write(chunk)
+    if chunk.size > @chunk_size
+      raise ArgumentError.new("chunk size mismatch: expected #{@chunk_size}, got #{chunk.size}")
+    end
+
+    @chunks << chunk
+    chunk.size
+  end
+
+  def read(chunk_size)
+    unless chunk_size == @chunk_size
+      raise ArgumentError.new("chunk size mismatch: expected #{@chunk_size}, got #{chunk_size}")
+    end
+
+    @chunks.shift
+  end
+
+  def chunks(chunk_size=1024)
+    Enumerator.new do |y|
+      while chunk = read(chunk_size)
+        y << chunk
+        Fiber.yield
+      end
+    end
+  end
+end
+
+File.open("test") do |f|
 
   sha1_proc = lambda do |f|
     digest = Digest::SHA1.new
-    f.fiber_chunks.each { |chunk| digest << chunk }
+    f.chunks.each { |chunk| digest << chunk }
     digest
   end
 
   sha2_proc = lambda do |f|
     digest = Digest::SHA2.new(256)
-    f.fiber_chunks.each { |chunk| digest << chunk }
+    f.chunks.each { |chunk| digest << chunk }
     digest
   end
 
   puts_proc = lambda do |f|
-    f.fiber_chunks.each { |chunk| puts chunk }
+    f.chunks.each { |chunk| puts chunk.length }
   end
 
   p f.tee(sha1_proc, sha2_proc, puts_proc)
