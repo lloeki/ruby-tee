@@ -8,34 +8,44 @@ module Enumerable
 end
 
 class IO
-  def chunks(chunk_size=1024)
-    Enumerator.new { |y| y << read(chunk_size) until eof? }
-  end
-
-  def each_chunk(chunk_size=nil)
-    chunks.each { |*args| yield *args }
-  end
-
-  def digest_with(digest, chunk_size=nil)
-    chunks(chunk_size).each { |chunk| digest << chunk }
-    digest
-  end
-
-  def sha256(chunk_size=nil)
-    digest_with Digest::SHA2.new(256), chunk_size
-  end
-
-  def tee(*procs)
-    ios = procs.map { |proc| FiberChunkedIO.new &proc }
-
-    chunks.each do |chunk|
-      ios.each do |io|
-        io.write chunk
-      end
+  module Chunkable
+    def chunks(chunk_size=1024)
+      Enumerator.new { |y| y << read(chunk_size) until eof? }
     end
-    ios.each { |io| io.close }
-    ios.map { |io| io.result }
+
+    def each_chunk(chunk_size=nil)
+      chunks.each { |*args| yield *args }
+    end
   end
+
+  module Digestable
+    def digest_with(digest, chunk_size=nil)
+      chunks(chunk_size).each { |chunk| digest << chunk }
+      digest
+    end
+
+    def sha256(chunk_size=nil)
+      digest_with Digest::SHA2.new(256), chunk_size
+    end
+  end
+
+  module Utils
+    def tee(*procs)
+      ios = procs.map { |proc| FiberChunkedIO.new &proc }
+
+      chunks.each do |chunk|
+        ios.each do |io|
+          io.write chunk
+        end
+      end
+      ios.each { |io| io.close }
+      ios.map { |io| io.result }
+    end
+  end
+
+  include Chunkable
+  include Digestable
+  include Utils
 end
 
 class FiberChunkedIO
@@ -83,11 +93,7 @@ class FiberChunkedIO
     @chunks.shift
   end
 
-  def chunks(chunk_size=1024)
-    Enumerator.new do |y|
-      y << read(chunk_size) until eof?
-    end
-  end
+  include IO::Chunkable
 end
 
 File.open("test") do |f|
