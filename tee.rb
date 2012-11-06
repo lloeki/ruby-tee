@@ -30,7 +30,7 @@ class IO
   end
 
   module Utils
-    def tee(*procs)
+    def fiber_tee(*procs)
       ios = procs.map { |proc| FiberChunkedIO.new &proc }
 
       chunks.each do |chunk|
@@ -41,6 +41,7 @@ class IO
       ios.each { |io| io.close }
       ios.map { |io| io.result }
     end
+    alias_method :tee, :fiber_tee
   end
 
   include Chunkable
