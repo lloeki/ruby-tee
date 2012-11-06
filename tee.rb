@@ -26,21 +26,15 @@ class IO
   end
 
   def tee(*procs)
-    ios = procs.map do |proc|
-      FiberChunkedIO.new &proc
-    end
+    ios = procs.map { |proc| FiberChunkedIO.new &proc }
 
     chunks.each do |chunk|
-      # for each proc
-      # - copy chunk into its dedicated IO stream
-      # - resume
-      ios.each.with_index do |io, i|
-        $stdout.puts "#{i}:#{tell}"
+      ios.each do |io|
         io.write chunk
-        io.resume
       end
     end
-    ios.map { |io| io.resume }
+    ios.each { |io| io.close }
+    ios.map { |io| io.result }
   end
 end
 
@@ -48,13 +42,25 @@ class FiberChunkedIO
   def initialize(chunk_size=1024, &block)
     @chunk_size = chunk_size
     @chunks = []
+    @eof = false
     @fiber = Fiber.new do
       @result = block.call self
     end
+    @fiber.resume
   end
 
-  def resume
+  # Being a stream, it behaves like IO#eof? and blocks until the other end sends some data or closes it.
+  def eof?
+    Fiber.yield
+    @eof
+  end
+
+  def close
+    @eof = true
     @fiber.resume
+  end
+
+  def result
     @result
   end
 
@@ -64,6 +70,8 @@ class FiberChunkedIO
     end
 
     @chunks << chunk
+    @eof = false
+    @fiber.resume
     chunk.size
   end
 
@@ -77,10 +85,7 @@ class FiberChunkedIO
 
   def chunks(chunk_size=1024)
     Enumerator.new do |y|
-      while chunk = read(chunk_size)
-        y << chunk
-        Fiber.yield
-      end
+      y << read(chunk_size) until eof?
     end
   end
 end
@@ -103,6 +108,8 @@ File.open("test") do |f|
     f.chunks.each { |chunk| puts chunk.length }
   end
 
-  p f.tee(sha1_proc, sha2_proc, puts_proc)
+  results = f.tee(sha1_proc, sha2_proc, puts_proc)
+  p results
+  p File.read('sums').lines.map.with_index { |l, i| results[i] == l.split(' ')[0] }
 
 end
