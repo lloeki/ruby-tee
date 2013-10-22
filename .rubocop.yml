@@ -1,0 +1,15 @@
+AsciiComments:
+    Enabled: false
+MethodLength:
+    Max: 30
+ParameterLists:
+    CountKeywordArgs: false
+Documentation:
+    Enabled: false
+TrivialAccessors:
+    ExactNameMatch: true
+    AllowPredicates: true
+AndOr:
+    Enabled: false
+PerlBackrefs:
+    Enabled: false
